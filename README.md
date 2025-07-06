@@ -46,8 +46,8 @@ A powerful Windows application to discover and analyze devices connected to your
 1. Install [.NET 8.0 SDK](https://dotnet.microsoft.com/download)
 2. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/wifi-device-scanner.git
-   cd wifi-device-scanner
+   git clone https://github.com/igarreta/WifiDeviceScanner.git
+   cd WifiDeviceScanner
    ```
 3. Build and run:
    ```bash
