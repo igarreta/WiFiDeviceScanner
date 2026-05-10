@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -19,6 +20,8 @@ namespace WiFiDeviceScanner
         private Label statusLabel;
         private ProgressBar progressBar;
         private BackgroundWorker scanWorker;
+        private int _sortColumn = 0;
+        private bool _sortAscending = true;
 
         public MainForm()
         {
@@ -90,6 +93,19 @@ namespace WiFiDeviceScanner
             // Handle resize and double click
             this.Resize += MainForm_Resize;
             deviceListView.DoubleClick += DeviceListView_DoubleClick;
+            deviceListView.ColumnClick += DeviceListView_ColumnClick;
+        }
+
+        private void DeviceListView_ColumnClick(object sender, ColumnClickEventArgs e)
+        {
+            if (e.Column == _sortColumn)
+                _sortAscending = !_sortAscending;
+            else
+            {
+                _sortColumn = e.Column;
+                _sortAscending = true;
+            }
+            deviceListView.ListViewItemSorter = new ListViewItemComparer(_sortColumn, _sortAscending);
         }
 
         private void DeviceListView_DoubleClick(object sender, EventArgs e)
@@ -328,13 +344,10 @@ namespace WiFiDeviceScanner
                 string[] lines = output.Split('\n');
                 foreach (string line in lines)
                 {
-                    if (line.Contains(ipAddress))
+                    string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 3 && parts[0] == ipAddress)
                     {
-                        string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length >= 2)
-                        {
-                            return parts[1];
-                        }
+                        return parts[1];
                     }
                 }
             }
@@ -344,6 +357,51 @@ namespace WiFiDeviceScanner
             }
 
             return "Unknown";
+        }
+    }
+
+    internal class ListViewItemComparer : IComparer
+    {
+        private readonly int _column;
+        private readonly bool _ascending;
+
+        public ListViewItemComparer(int column, bool ascending)
+        {
+            _column = column;
+            _ascending = ascending;
+        }
+
+        public int Compare(object? x, object? y)
+        {
+            string valX = ((ListViewItem)x!).SubItems[_column].Text;
+            string valY = ((ListViewItem)y!).SubItems[_column].Text;
+
+            int result = _column switch
+            {
+                0 => CompareIP(valX, valY),
+                4 => CompareResponseTime(valX, valY),
+                _ => string.Compare(valX, valY, StringComparison.OrdinalIgnoreCase)
+            };
+
+            return _ascending ? result : -result;
+        }
+
+        private static int CompareIP(string a, string b)
+        {
+            static long ToLong(string ip)
+            {
+                var p = ip.Split('.');
+                if (p.Length != 4) return 0;
+                return long.Parse(p[0]) * 16777216L + long.Parse(p[1]) * 65536L +
+                       long.Parse(p[2]) * 256L + long.Parse(p[3]);
+            }
+            return ToLong(a).CompareTo(ToLong(b));
+        }
+
+        private static int CompareResponseTime(string a, string b)
+        {
+            int Parse(string s) => int.TryParse(s.Replace(" ms", ""), out int v) ? v : int.MaxValue;
+            return Parse(a).CompareTo(Parse(b));
         }
     }
 
