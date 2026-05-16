@@ -188,6 +188,10 @@ A powerful Windows application to discover and analyze devices connected to your
 - Device discovery with IP, MAC, and hostname resolution
 - Real-time progress indication
 
+### Version 1.2
+- Custom IP range scanning (e.g. `192.168.1.10-192.168.1.100`) with recent ranges remembered across sessions
+- Persistent device names: right-click to rename any device by MAC address, saved to `%AppData%/WiFiDeviceScanner/config.json`
+
 ### Version 1.1
 - Added device detail analysis window
 - Implemented port scanning capabilities
