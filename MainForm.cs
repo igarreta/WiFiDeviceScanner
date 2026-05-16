@@ -18,13 +18,22 @@ namespace WiFiDeviceScanner
         private Button scanButton;
         private Button refreshButton;
         private Label statusLabel;
+        private Label networkLabel;
+        private ComboBox networkComboBox;
         private ProgressBar progressBar;
         private BackgroundWorker scanWorker;
+        private ContextMenuStrip deviceContextMenu;
+        private ToolStripMenuItem renameMenuItem;
+        private ToolStripMenuItem clearNameMenuItem;
+        private AppConfig config;
         private int _sortColumn = 0;
         private bool _sortAscending = true;
+        private const string AutoNetworkLabel = "Auto (detect)";
+        private const int MaxRangeSize = 4096;
 
         public MainForm()
         {
+            config = ConfigStore.Load();
             InitializeComponent();
             InitializeBackgroundWorker();
         }
@@ -57,20 +66,36 @@ namespace WiFiDeviceScanner
             {
                 Text = "Ready to scan",
                 Location = new Point(210, 15),
-                Size = new Size(300, 20)
+                Size = new Size(560, 20),
+                AutoEllipsis = true
             };
+
+            networkLabel = new Label
+            {
+                Text = "Network:",
+                Location = new Point(10, 55),
+                Size = new Size(60, 20)
+            };
+
+            networkComboBox = new ComboBox
+            {
+                Location = new Point(75, 52),
+                Size = new Size(280, 25),
+                DropDownStyle = ComboBoxStyle.DropDown
+            };
+            RefreshNetworkComboBox();
 
             progressBar = new ProgressBar
             {
-                Location = new Point(10, 50),
-                Size = new Size(760, 20),
+                Location = new Point(365, 55),
+                Size = new Size(405, 20),
                 Visible = false
             };
 
             deviceListView = new ListView
             {
-                Location = new Point(10, 80),
-                Size = new Size(760, 480),
+                Location = new Point(10, 90),
+                Size = new Size(760, 470),
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = true
@@ -83,10 +108,23 @@ namespace WiFiDeviceScanner
             deviceListView.Columns.Add("Status", 80);
             deviceListView.Columns.Add("Response Time", 100);
 
+            // Context menu for renaming
+            deviceContextMenu = new ContextMenuStrip();
+            renameMenuItem = new ToolStripMenuItem("Rename...");
+            renameMenuItem.Click += RenameMenuItem_Click;
+            clearNameMenuItem = new ToolStripMenuItem("Clear custom name");
+            clearNameMenuItem.Click += ClearNameMenuItem_Click;
+            deviceContextMenu.Items.Add(renameMenuItem);
+            deviceContextMenu.Items.Add(clearNameMenuItem);
+            deviceContextMenu.Opening += DeviceContextMenu_Opening;
+            deviceListView.ContextMenuStrip = deviceContextMenu;
+
             // Add controls to form
             this.Controls.Add(scanButton);
             this.Controls.Add(refreshButton);
             this.Controls.Add(statusLabel);
+            this.Controls.Add(networkLabel);
+            this.Controls.Add(networkComboBox);
             this.Controls.Add(progressBar);
             this.Controls.Add(deviceListView);
 
@@ -94,6 +132,22 @@ namespace WiFiDeviceScanner
             this.Resize += MainForm_Resize;
             deviceListView.DoubleClick += DeviceListView_DoubleClick;
             deviceListView.ColumnClick += DeviceListView_ColumnClick;
+        }
+
+        private void RefreshNetworkComboBox()
+        {
+            string current = networkComboBox.Text;
+            networkComboBox.BeginUpdate();
+            networkComboBox.Items.Clear();
+            networkComboBox.Items.Add(AutoNetworkLabel);
+            foreach (var entry in config.RecentNetworks)
+                networkComboBox.Items.Add(entry);
+
+            if (!string.IsNullOrEmpty(current) && networkComboBox.Items.Contains(current))
+                networkComboBox.SelectedItem = current;
+            else
+                networkComboBox.SelectedIndex = 0;
+            networkComboBox.EndUpdate();
         }
 
         private void DeviceListView_ColumnClick(object sender, ColumnClickEventArgs e)
@@ -115,19 +169,118 @@ namespace WiFiDeviceScanner
                 var selectedItem = deviceListView.SelectedItems[0];
                 string ipAddress = selectedItem.SubItems[0].Text;
                 string deviceName = selectedItem.SubItems[2].Text;
-                
+
                 var detailForm = new DeviceDetailForm(ipAddress, deviceName);
                 detailForm.Show();
             }
+        }
+
+        private void DeviceContextMenu_Opening(object? sender, System.ComponentModel.CancelEventArgs e)
+        {
+            if (deviceListView.SelectedItems.Count == 0)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            var tag = deviceListView.SelectedItems[0].Tag as RowMeta;
+            bool hasMac = tag != null && !string.IsNullOrEmpty(tag.Mac);
+            renameMenuItem.Enabled = hasMac;
+            clearNameMenuItem.Enabled = hasMac && config.DeviceNames.ContainsKey(tag!.Mac);
+        }
+
+        private void RenameMenuItem_Click(object? sender, EventArgs e)
+        {
+            if (deviceListView.SelectedItems.Count == 0) return;
+            var item = deviceListView.SelectedItems[0];
+            var tag = item.Tag as RowMeta;
+            if (tag == null || string.IsNullOrEmpty(tag.Mac)) return;
+
+            string current = item.SubItems[2].Text;
+            string? entered = PromptForName(current);
+            if (entered == null) return;
+
+            entered = entered.Trim();
+            if (string.IsNullOrEmpty(entered))
+                return;
+
+            config.DeviceNames[tag.Mac] = entered;
+            ConfigStore.Save(config);
+            item.SubItems[2].Text = entered;
+        }
+
+        private void ClearNameMenuItem_Click(object? sender, EventArgs e)
+        {
+            if (deviceListView.SelectedItems.Count == 0) return;
+            var item = deviceListView.SelectedItems[0];
+            var tag = item.Tag as RowMeta;
+            if (tag == null || string.IsNullOrEmpty(tag.Mac)) return;
+
+            if (!config.DeviceNames.Remove(tag.Mac)) return;
+            ConfigStore.Save(config);
+            item.SubItems[2].Text = string.IsNullOrEmpty(tag.DnsName) ? "Unknown" : tag.DnsName;
+        }
+
+        private string? PromptForName(string currentName)
+        {
+            using var dialog = new Form
+            {
+                Text = "Rename Device",
+                Size = new Size(360, 140),
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                MaximizeBox = false
+            };
+
+            var label = new Label
+            {
+                Text = "Device name:",
+                Location = new Point(12, 12),
+                Size = new Size(320, 20)
+            };
+            var textBox = new TextBox
+            {
+                Text = currentName,
+                Location = new Point(12, 35),
+                Size = new Size(320, 25)
+            };
+            textBox.SelectAll();
+
+            var okButton = new Button
+            {
+                Text = "OK",
+                DialogResult = DialogResult.OK,
+                Location = new Point(172, 70),
+                Size = new Size(75, 25)
+            };
+            var cancelButton = new Button
+            {
+                Text = "Cancel",
+                DialogResult = DialogResult.Cancel,
+                Location = new Point(257, 70),
+                Size = new Size(75, 25)
+            };
+
+            dialog.Controls.Add(label);
+            dialog.Controls.Add(textBox);
+            dialog.Controls.Add(okButton);
+            dialog.Controls.Add(cancelButton);
+            dialog.AcceptButton = okButton;
+            dialog.CancelButton = cancelButton;
+
+            return dialog.ShowDialog(this) == DialogResult.OK ? textBox.Text : null;
         }
 
         private void MainForm_Resize(object sender, EventArgs e)
         {
             if (this.WindowState != FormWindowState.Minimized)
             {
-                progressBar.Width = this.ClientSize.Width - 20;
-                deviceListView.Width = this.ClientSize.Width - 20;
-                deviceListView.Height = this.ClientSize.Height - 90;
+                int formWidth = this.ClientSize.Width;
+                statusLabel.Width = Math.Max(100, formWidth - statusLabel.Left - 10);
+                progressBar.Width = Math.Max(100, formWidth - progressBar.Left - 10);
+                deviceListView.Width = formWidth - 20;
+                deviceListView.Height = this.ClientSize.Height - 100;
             }
         }
 
@@ -168,55 +321,145 @@ namespace WiFiDeviceScanner
 
         private void StartScan()
         {
+            string selection = (networkComboBox.Text ?? string.Empty).Trim();
+            ScanRequest request;
+
+            if (string.IsNullOrEmpty(selection) || selection == AutoNetworkLabel)
+            {
+                request = new ScanRequest { IsAuto = true };
+            }
+            else
+            {
+                if (!TryParseRange(selection, out var ips, out var error))
+                {
+                    MessageBox.Show(this, error, "Invalid network", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                request = new ScanRequest { IsAuto = false, RawInput = selection, Ips = ips };
+            }
+
             deviceListView.Items.Clear();
             scanButton.Text = "Cancel Scan";
-            statusLabel.Text = "Scanning network...";
+            statusLabel.Text = request.IsAuto ? "Scanning network..." : $"Scanning {request.Ips!.Count} addresses...";
             progressBar.Visible = true;
             progressBar.Value = 0;
-            scanWorker.RunWorkerAsync();
+            scanWorker.RunWorkerAsync(request);
         }
 
         private void ScanWorker_DoWork(object sender, DoWorkEventArgs e)
         {
             var worker = sender as BackgroundWorker;
             var devices = new List<DeviceInfo>();
+            var argument = e.Argument as ScanRequest ?? new ScanRequest { IsAuto = true };
 
-            // Get local network range
-            string localIP = GetLocalIPAddress();
-            if (string.IsNullOrEmpty(localIP))
+            List<string> ipsToScan;
+            if (argument.IsAuto)
             {
-                e.Result = devices;
-                return;
-            }
-
-            string baseIP = localIP.Substring(0, localIP.LastIndexOf('.') + 1);
-            int totalIPs = 254;
-
-            // Scan IP range (1-254) - Back to parallel for speed
-            Parallel.For(1, 255, new ParallelOptions { MaxDegreeOfParallelism = 50 }, i =>
-            {
-                if (worker.CancellationPending)
+                string localIP = GetLocalIPAddress();
+                if (string.IsNullOrEmpty(localIP))
                 {
-                    e.Cancel = true;
+                    e.Result = new ScanResult { Devices = devices };
                     return;
                 }
+                string baseIP = localIP.Substring(0, localIP.LastIndexOf('.') + 1);
+                ipsToScan = new List<string>(254);
+                for (int i = 1; i <= 254; i++)
+                    ipsToScan.Add(baseIP + i);
+            }
+            else
+            {
+                ipsToScan = argument.Ips!;
+            }
 
-                string ipToScan = baseIP + i;
-                var device = PingDevice(ipToScan);
-                
+            int totalIPs = ipsToScan.Count;
+            int completed = 0;
+
+            Parallel.ForEach(ipsToScan, new ParallelOptions { MaxDegreeOfParallelism = 50 }, ip =>
+            {
+                if (worker!.CancellationPending)
+                    return;
+
+                var device = PingDevice(ip);
                 if (device != null)
                 {
                     lock (devices)
-                    {
                         devices.Add(device);
-                    }
                 }
 
-                int progress = (int)((double)i / totalIPs * 100);
+                int done = System.Threading.Interlocked.Increment(ref completed);
+                int progress = totalIPs == 0 ? 100 : (int)((double)done / totalIPs * 100);
                 worker.ReportProgress(progress);
             });
 
-            e.Result = devices;
+            if (worker!.CancellationPending)
+                e.Cancel = true;
+
+            e.Result = new ScanResult { Devices = devices, NetworkEntry = argument.IsAuto ? null : argument.RawInput };
+        }
+
+        public static bool TryParseRange(string input, out List<string> ips, out string error)
+        {
+            ips = new List<string>();
+            error = string.Empty;
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                error = "Network is empty.";
+                return false;
+            }
+
+            var parts = input.Trim().Split('-');
+            if (parts.Length != 2)
+            {
+                error = "Expected format: A.B.C.D-A.B.C.D";
+                return false;
+            }
+
+            if (!IPAddress.TryParse(parts[0].Trim(), out var startIp) ||
+                !IPAddress.TryParse(parts[1].Trim(), out var endIp))
+            {
+                error = "One of the IP addresses is invalid.";
+                return false;
+            }
+
+            if (startIp.AddressFamily != AddressFamily.InterNetwork ||
+                endIp.AddressFamily != AddressFamily.InterNetwork)
+            {
+                error = "Only IPv4 addresses are supported.";
+                return false;
+            }
+
+            uint start = IpToUInt(startIp);
+            uint end = IpToUInt(endIp);
+            if (start > end)
+            {
+                error = "Start IP must be less than or equal to end IP.";
+                return false;
+            }
+
+            long count = (long)end - start + 1;
+            if (count > MaxRangeSize)
+            {
+                error = $"Range too large ({count} IPs). Maximum is {MaxRangeSize}.";
+                return false;
+            }
+
+            for (uint v = start; v <= end; v++)
+            {
+                ips.Add(UIntToIp(v));
+                if (v == uint.MaxValue) break;
+            }
+            return true;
+        }
+
+        private static uint IpToUInt(IPAddress ip)
+        {
+            byte[] bytes = ip.GetAddressBytes();
+            return ((uint)bytes[0] << 24) | ((uint)bytes[1] << 16) | ((uint)bytes[2] << 8) | bytes[3];
+        }
+
+        private static string UIntToIp(uint value)
+        {
+            return $"{(value >> 24) & 0xFF}.{(value >> 16) & 0xFF}.{(value >> 8) & 0xFF}.{value & 0xFF}";
         }
 
         private void ScanWorker_ProgressChanged(object sender, ProgressChangedEventArgs e)
@@ -242,25 +485,45 @@ namespace WiFiDeviceScanner
                 return;
             }
 
-            var devices = e.Result as List<DeviceInfo>;
-            
+            var result = e.Result as ScanResult;
+            var devices = result?.Devices ?? new List<DeviceInfo>();
+
             // Sort devices by IP address numerically
             var sortedDevices = devices.OrderBy(d => {
                 var parts = d.IPAddress.Split('.');
-                return int.Parse(parts[0]) * 256 * 256 * 256 + 
-                       int.Parse(parts[1]) * 256 * 256 + 
-                       int.Parse(parts[2]) * 256 + 
+                return int.Parse(parts[0]) * 256 * 256 * 256 +
+                       int.Parse(parts[1]) * 256 * 256 +
+                       int.Parse(parts[2]) * 256 +
                        int.Parse(parts[3]);
             });
-            
+
             foreach (var device in sortedDevices)
             {
+                string normalizedMac = ConfigStore.NormalizeMac(device.MACAddress);
+                string dnsName = device.DeviceName ?? string.Empty;
+                string displayName = dnsName;
+                if (!string.IsNullOrEmpty(normalizedMac) &&
+                    config.DeviceNames.TryGetValue(normalizedMac, out var customName) &&
+                    !string.IsNullOrEmpty(customName))
+                {
+                    displayName = customName;
+                }
+
                 var item = new ListViewItem(device.IPAddress);
                 item.SubItems.Add(device.MACAddress);
-                item.SubItems.Add(device.DeviceName);
+                item.SubItems.Add(displayName);
                 item.SubItems.Add(device.Status);
                 item.SubItems.Add(device.ResponseTime);
+                item.Tag = new RowMeta { Mac = normalizedMac, DnsName = dnsName };
                 deviceListView.Items.Add(item);
+            }
+
+            if (result != null && !string.IsNullOrEmpty(result.NetworkEntry))
+            {
+                ConfigStore.AddRecentNetwork(config, result.NetworkEntry);
+                ConfigStore.Save(config);
+                RefreshNetworkComboBox();
+                networkComboBox.SelectedItem = result.NetworkEntry;
             }
 
             statusLabel.Text = $"Scan complete. Found {devices.Count} devices.";
@@ -407,11 +670,30 @@ namespace WiFiDeviceScanner
 
     public class DeviceInfo
     {
-        public string IPAddress { get; set; }
-        public string MACAddress { get; set; }
-        public string DeviceName { get; set; }
-        public string Status { get; set; }
-        public string ResponseTime { get; set; }
+        public string IPAddress { get; set; } = string.Empty;
+        public string MACAddress { get; set; } = string.Empty;
+        public string DeviceName { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string ResponseTime { get; set; } = string.Empty;
+    }
+
+    internal class RowMeta
+    {
+        public string Mac { get; set; } = string.Empty;
+        public string DnsName { get; set; } = string.Empty;
+    }
+
+    internal class ScanRequest
+    {
+        public bool IsAuto { get; set; }
+        public string? RawInput { get; set; }
+        public List<string>? Ips { get; set; }
+    }
+
+    internal class ScanResult
+    {
+        public List<DeviceInfo> Devices { get; set; } = new List<DeviceInfo>();
+        public string? NetworkEntry { get; set; }
     }
 
     public partial class DeviceDetailForm : Form
