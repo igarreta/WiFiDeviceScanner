@@ -10,7 +10,9 @@ A powerful Windows application to discover and analyze devices connected to your
 
 ### Network Discovery
 - **Fast Network Scanning**: Automatically detects your local network range and scans all possible IP addresses
+- **Custom IP Range**: Scan any IPv4 range (e.g. `192.168.1.10-192.168.1.100`) in addition to the auto-detected network. Recently used ranges are remembered.
 - **Device Information**: Shows IP address, MAC address, device name, online status, and response time
+- **Custom Device Names**: Right-click a device to rename it. Names are saved by MAC address and persist across sessions.
 - **Smart Sorting**: Results are automatically sorted by IP address for easy navigation
 - **Real-time Progress**: Visual progress bar shows scanning progress
 - **Parallel Processing**: Uses multi-threading for fast network discovery
@@ -59,9 +61,16 @@ A powerful Windows application to discover and analyze devices connected to your
 
 ### Basic Network Scanning
 1. Launch the application
-2. Click **"Scan Network"** to start discovering devices
-3. Wait for the scan to complete (typically 10-30 seconds)
-4. View all discovered devices in the list
+2. Leave the **Network** selector on "Auto (detect)" or type/select a range like `192.168.1.10-192.168.1.100`
+3. Click **"Scan Network"** to start discovering devices
+4. Wait for the scan to complete (typically 10-30 seconds)
+5. View all discovered devices in the list
+
+### Naming Devices
+1. Right-click any device row
+2. Choose **"Rename..."** and enter a friendly name (e.g. "Living Room TV")
+3. The name is saved by MAC address to `%AppData%/WiFiDeviceScanner/config.json` and reappears in future scans even if the IP changes
+4. Use **"Clear custom name"** to revert to the DNS hostname
 
 ### Device Analysis
 1. **Double-click** on any device in the list
