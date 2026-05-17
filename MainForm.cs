@@ -26,6 +26,8 @@ namespace WiFiDeviceScanner
         private ContextMenuStrip deviceContextMenu;
         private ToolStripMenuItem renameMenuItem;
         private ToolStripMenuItem clearNameMenuItem;
+        private ToolStripMenuItem copyIpMenuItem;
+        private ToolStripMenuItem copyMacMenuItem;
         private AppConfig config;
         private int _sortColumn = 0;
         private bool _sortAscending = true;
@@ -114,7 +116,6 @@ namespace WiFiDeviceScanner
             deviceListView.Columns.Add("IP Address", 120);
             deviceListView.Columns.Add("MAC Address", 140);
             deviceListView.Columns.Add("Device Name", 200);
-            deviceListView.Columns.Add("Status", 80);
             deviceListView.Columns.Add("Response Time", 100);
             deviceListView.Columns.Add("Not Seen For", 110);
 
@@ -124,8 +125,15 @@ namespace WiFiDeviceScanner
             renameMenuItem.Click += RenameMenuItem_Click;
             clearNameMenuItem = new ToolStripMenuItem("Clear custom name");
             clearNameMenuItem.Click += ClearNameMenuItem_Click;
+            copyIpMenuItem = new ToolStripMenuItem("Copy IP address");
+            copyIpMenuItem.Click += CopyIpMenuItem_Click;
+            copyMacMenuItem = new ToolStripMenuItem("Copy MAC address");
+            copyMacMenuItem.Click += CopyMacMenuItem_Click;
             deviceContextMenu.Items.Add(renameMenuItem);
             deviceContextMenu.Items.Add(clearNameMenuItem);
+            deviceContextMenu.Items.Add(new ToolStripSeparator());
+            deviceContextMenu.Items.Add(copyIpMenuItem);
+            deviceContextMenu.Items.Add(copyMacMenuItem);
             deviceContextMenu.Opening += DeviceContextMenu_Opening;
             deviceListView.ContextMenuStrip = deviceContextMenu;
 
@@ -240,6 +248,18 @@ namespace WiFiDeviceScanner
             if (!config.DeviceNames.Remove(tag.Mac)) return;
             ConfigStore.Save(config);
             item.SubItems[2].Text = string.IsNullOrEmpty(tag.DnsName) ? "Unknown" : tag.DnsName;
+        }
+
+        private void CopyIpMenuItem_Click(object? sender, EventArgs e)
+        {
+            if (deviceListView.SelectedItems.Count > 0)
+                Clipboard.SetText(deviceListView.SelectedItems[0].SubItems[0].Text);
+        }
+
+        private void CopyMacMenuItem_Click(object? sender, EventArgs e)
+        {
+            if (deviceListView.SelectedItems.Count > 0)
+                Clipboard.SetText(deviceListView.SelectedItems[0].SubItems[1].Text);
         }
 
         private string? PromptForName(string currentName)
@@ -382,7 +402,7 @@ namespace WiFiDeviceScanner
             try
             {
                 using var writer = new System.IO.StreamWriter(path, false, System.Text.Encoding.UTF8);
-                writer.WriteLine("IP Address,MAC Address,Device Name,Status,Response Time,Not Seen For");
+                writer.WriteLine("IP Address,MAC Address,Device Name,Response Time,Not Seen For");
 
                 string CsvField(string s)
                 {
@@ -402,8 +422,7 @@ namespace WiFiDeviceScanner
                         item.SubItems.Count > 1 ? item.SubItems[1].Text : "",
                         item.SubItems.Count > 2 ? item.SubItems[2].Text : "",
                         item.SubItems.Count > 3 ? item.SubItems[3].Text : "",
-                        item.SubItems.Count > 4 ? item.SubItems[4].Text : "",
-                        item.SubItems.Count > 5 ? item.SubItems[5].Text : ""
+                        item.SubItems.Count > 4 ? item.SubItems[4].Text : ""
                     };
                     writer.WriteLine(string.Join(",", fields.Select(CsvField)));
                 }
@@ -654,9 +673,8 @@ namespace WiFiDeviceScanner
                     var item = new ListViewItem(device.IPAddress);
                     item.SubItems.Add(device.MACAddress);
                     item.SubItems.Add(displayName);
-                    item.SubItems.Add(device.Status);
                     item.SubItems.Add(device.ResponseTime);
-                    item.SubItems.Add(string.Empty); // Not Seen For — empty while online
+                    item.SubItems.Add("Online");
                     item.Tag = new RowMeta { Mac = normalizedMac, DnsName = dnsName, IsOnline = true, LastSeenUtc = now };
                     deviceListView.Items.Add(item);
                 }
@@ -674,9 +692,8 @@ namespace WiFiDeviceScanner
                     var offlineItem = new ListViewItem(knownIp);
                     offlineItem.SubItems.Add(mac);
                     offlineItem.SubItems.Add(displayName);
-                    offlineItem.SubItems.Add("Offline");
                     offlineItem.SubItems.Add(string.Empty);
-                    offlineItem.SubItems.Add(FormatTimeSince(lastSeen)); // Not Seen For
+                    offlineItem.SubItems.Add(FormatTimeSince(lastSeen));
                     offlineItem.ForeColor = SystemColors.GrayText;
                     offlineItem.Tag = new RowMeta { Mac = mac, DnsName = string.Empty, IsOnline = false, LastSeenUtc = lastSeen };
                     deviceListView.Items.Add(offlineItem);
@@ -739,9 +756,8 @@ namespace WiFiDeviceScanner
                     item.SubItems[0].Text = fresh.IPAddress;
                     item.SubItems[1].Text = fresh.MACAddress;
                     item.SubItems[2].Text = displayName;
-                    item.SubItems[3].Text = fresh.Status;
-                    item.SubItems[4].Text = fresh.ResponseTime;
-                    item.SubItems[5].Text = string.Empty; // Not Seen For — empty while online
+                    item.SubItems[3].Text = fresh.ResponseTime;
+                    item.SubItems[4].Text = "Online";
                     item.ForeColor = SystemColors.WindowText;
                     item.Tag = new RowMeta { Mac = normalizedMac, DnsName = dnsName, IsOnline = true, LastSeenUtc = now };
 
@@ -757,15 +773,14 @@ namespace WiFiDeviceScanner
                 {
                     // Was online, now gone
                     DateTime lastSeen = meta.LastSeenUtc ?? now;
-                    item.SubItems[3].Text = "Offline";
-                    item.SubItems[4].Text = string.Empty;
-                    item.SubItems[5].Text = FormatTimeSince(lastSeen); // Not Seen For
+                    item.SubItems[3].Text = string.Empty;
+                    item.SubItems[4].Text = FormatTimeSince(lastSeen);
                     item.ForeColor = SystemColors.GrayText;
                     item.Tag = new RowMeta { Mac = meta.Mac, DnsName = meta.DnsName, IsOnline = false, LastSeenUtc = lastSeen };
                 }
                 else if (meta?.IsOnline == false && meta.LastSeenUtc.HasValue)
                 {
-                    item.SubItems[5].Text = FormatTimeSince(meta.LastSeenUtc.Value);
+                    item.SubItems[4].Text = FormatTimeSince(meta.LastSeenUtc.Value);
                 }
             }
 
@@ -792,9 +807,8 @@ namespace WiFiDeviceScanner
                 var newItem = new ListViewItem(fresh.IPAddress);
                 newItem.SubItems.Add(fresh.MACAddress);
                 newItem.SubItems.Add(displayName);
-                newItem.SubItems.Add(fresh.Status);
                 newItem.SubItems.Add(fresh.ResponseTime);
-                newItem.SubItems.Add(string.Empty); // Not Seen For — empty while online
+                newItem.SubItems.Add("Online");
                 newItem.Tag = new RowMeta { Mac = normalizedMac, DnsName = dnsName, IsOnline = true, LastSeenUtc = now };
                 deviceListView.Items.Add(newItem);
             }
@@ -813,9 +827,8 @@ namespace WiFiDeviceScanner
                 var offlineItem = new ListViewItem(knownIp);
                 offlineItem.SubItems.Add(mac);
                 offlineItem.SubItems.Add(displayName);
-                offlineItem.SubItems.Add("Offline");
                 offlineItem.SubItems.Add(string.Empty);
-                offlineItem.SubItems.Add(FormatTimeSince(lastSeen)); // Not Seen For
+                offlineItem.SubItems.Add(FormatTimeSince(lastSeen));
                 offlineItem.ForeColor = SystemColors.GrayText;
                 offlineItem.Tag = new RowMeta { Mac = mac, DnsName = string.Empty, IsOnline = false, LastSeenUtc = lastSeen };
                 deviceListView.Items.Add(offlineItem);
@@ -1114,8 +1127,8 @@ namespace WiFiDeviceScanner
             int result = _column switch
             {
                 0 => CompareIP(valX, valY),
-                4 => CompareResponseTime(valX, valY),
-                5 => CompareNotSeenFor(metaX, metaY),
+                3 => CompareResponseTime(valX, valY),
+                4 => CompareNotSeenFor(metaX, metaY),
                 _ => string.Compare(valX, valY, StringComparison.OrdinalIgnoreCase)
             };
 
