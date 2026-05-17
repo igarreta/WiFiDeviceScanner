@@ -10,6 +10,9 @@ namespace WiFiDeviceScanner
     {
         public Dictionary<string, string> DeviceNames { get; set; } = new Dictionary<string, string>();
         public List<string> RecentNetworks { get; set; } = new List<string>();
+        public Dictionary<string, DateTime> LastSeen { get; set; } = new Dictionary<string, DateTime>();
+        public Dictionary<string, string> KnownIPs { get; set; } = new Dictionary<string, string>();
+        public string LastNetworkSelection { get; set; } = string.Empty;
     }
 
     public static class ConfigStore

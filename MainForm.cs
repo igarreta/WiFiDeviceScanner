@@ -22,6 +22,7 @@ namespace WiFiDeviceScanner
         private ComboBox networkComboBox;
         private ProgressBar progressBar;
         private BackgroundWorker scanWorker;
+        private Button exportButton;
         private ContextMenuStrip deviceContextMenu;
         private ToolStripMenuItem renameMenuItem;
         private ToolStripMenuItem clearNameMenuItem;
@@ -41,9 +42,9 @@ namespace WiFiDeviceScanner
         private void InitializeComponent()
         {
             this.Text = "WiFi Device Scanner";
-            this.Size = new Size(800, 600);
+            this.Size = new Size(980, 600);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.MinimumSize = new Size(600, 400);
+            this.MinimumSize = new Size(760, 400);
 
             // Create controls
             scanButton = new Button
@@ -62,11 +63,19 @@ namespace WiFiDeviceScanner
             };
             refreshButton.Click += RefreshButton_Click;
 
+            exportButton = new Button
+            {
+                Text = "Export...",
+                Size = new Size(90, 30),
+                Location = new Point(210, 10)
+            };
+            exportButton.Click += ExportButton_Click;
+
             statusLabel = new Label
             {
                 Text = "Ready to scan",
-                Location = new Point(210, 15),
-                Size = new Size(560, 20),
+                Location = new Point(310, 15),
+                Size = new Size(650, 20),
                 AutoEllipsis = true
             };
 
@@ -95,7 +104,7 @@ namespace WiFiDeviceScanner
             deviceListView = new ListView
             {
                 Location = new Point(10, 90),
-                Size = new Size(760, 470),
+                Size = new Size(950, 470),
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = true
@@ -107,6 +116,7 @@ namespace WiFiDeviceScanner
             deviceListView.Columns.Add("Device Name", 200);
             deviceListView.Columns.Add("Status", 80);
             deviceListView.Columns.Add("Response Time", 100);
+            deviceListView.Columns.Add("Not Seen For", 110);
 
             // Context menu for renaming
             deviceContextMenu = new ContextMenuStrip();
@@ -122,6 +132,7 @@ namespace WiFiDeviceScanner
             // Add controls to form
             this.Controls.Add(scanButton);
             this.Controls.Add(refreshButton);
+            this.Controls.Add(exportButton);
             this.Controls.Add(statusLabel);
             this.Controls.Add(networkLabel);
             this.Controls.Add(networkComboBox);
@@ -137,14 +148,24 @@ namespace WiFiDeviceScanner
         private void RefreshNetworkComboBox()
         {
             string current = networkComboBox.Text;
+            if (string.IsNullOrEmpty(current))
+                current = config.LastNetworkSelection;
+
             networkComboBox.BeginUpdate();
             networkComboBox.Items.Clear();
             networkComboBox.Items.Add(AutoNetworkLabel);
+            foreach (var range in GetActiveAdapterRanges())
+                networkComboBox.Items.Add(range);
             foreach (var entry in config.RecentNetworks)
                 networkComboBox.Items.Add(entry);
 
-            if (!string.IsNullOrEmpty(current) && networkComboBox.Items.Contains(current))
-                networkComboBox.SelectedItem = current;
+            if (!string.IsNullOrEmpty(current))
+            {
+                if (networkComboBox.Items.Contains(current))
+                    networkComboBox.SelectedItem = current;
+                else
+                    networkComboBox.Text = current;
+            }
             else
                 networkComboBox.SelectedIndex = 0;
             networkComboBox.EndUpdate();
@@ -280,7 +301,7 @@ namespace WiFiDeviceScanner
                 statusLabel.Width = Math.Max(100, formWidth - statusLabel.Left - 10);
                 progressBar.Width = Math.Max(100, formWidth - progressBar.Left - 10);
                 deviceListView.Width = formWidth - 20;
-                deviceListView.Height = this.ClientSize.Height - 100;
+                deviceListView.Height = this.ClientSize.Height - deviceListView.Top - 10;
             }
         }
 
@@ -315,30 +336,117 @@ namespace WiFiDeviceScanner
         {
             if (!scanWorker.IsBusy)
             {
-                StartScan();
+                StartScan(isRefresh: true);
             }
         }
 
-        private void StartScan()
+        private void ExportButton_Click(object? sender, EventArgs e)
         {
-            string selection = (networkComboBox.Text ?? string.Empty).Trim();
+            bool? exportAll = PromptExportOptions();
+            if (exportAll == null) return;
+
+            using var sfd = new SaveFileDialog
+            {
+                Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+                DefaultExt = "csv",
+                FileName = $"WiFiScan_{DateTime.Now:yyyyMMdd_HHmmss}.csv"
+            };
+            if (sfd.ShowDialog(this) != DialogResult.OK) return;
+
+            ExportToCsv(sfd.FileName, exportAll.Value);
+        }
+
+        private bool? PromptExportOptions()
+        {
+            using var dialog = new Form
+            {
+                Text = "Export Options",
+                Size = new Size(280, 160),
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                MaximizeBox = false
+            };
+            var rbAll    = new RadioButton { Text = "All devices (including offline)", Location = new Point(15, 15), Size = new Size(240, 22), Checked = true };
+            var rbOnline = new RadioButton { Text = "Connected only",                 Location = new Point(15, 40), Size = new Size(240, 22) };
+            var okButton     = new Button { Text = "Save",   DialogResult = DialogResult.OK,     Location = new Point(100, 85), Size = new Size(75, 25) };
+            var cancelButton = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(185, 85), Size = new Size(75, 25) };
+            dialog.Controls.AddRange(new Control[] { rbAll, rbOnline, okButton, cancelButton });
+            dialog.AcceptButton = okButton;
+            dialog.CancelButton = cancelButton;
+            return dialog.ShowDialog(this) == DialogResult.OK ? rbAll.Checked : null;
+        }
+
+        private void ExportToCsv(string path, bool allDevices)
+        {
+            try
+            {
+                using var writer = new System.IO.StreamWriter(path, false, System.Text.Encoding.UTF8);
+                writer.WriteLine("IP Address,MAC Address,Device Name,Status,Response Time,Not Seen For");
+
+                string CsvField(string s)
+                {
+                    if (s.Contains(',') || s.Contains('"') || s.Contains('\n') || s.Contains('\r'))
+                        return "\"" + s.Replace("\"", "\"\"") + "\"";
+                    return s;
+                }
+
+                foreach (ListViewItem item in deviceListView.Items)
+                {
+                    var meta = item.Tag as RowMeta;
+                    if (!allDevices && !(meta?.IsOnline ?? true)) continue;
+
+                    var fields = new[]
+                    {
+                        item.SubItems.Count > 0 ? item.SubItems[0].Text : "",
+                        item.SubItems.Count > 1 ? item.SubItems[1].Text : "",
+                        item.SubItems.Count > 2 ? item.SubItems[2].Text : "",
+                        item.SubItems.Count > 3 ? item.SubItems[3].Text : "",
+                        item.SubItems.Count > 4 ? item.SubItems[4].Text : "",
+                        item.SubItems.Count > 5 ? item.SubItems[5].Text : ""
+                    };
+                    writer.WriteLine(string.Join(",", fields.Select(CsvField)));
+                }
+
+                MessageBox.Show(this, $"Exported {deviceListView.Items.Count} row(s) to:{Environment.NewLine}{path}",
+                    "Export Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Export failed: {ex.Message}", "Export Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void StartScan(bool isRefresh = false)
+        {
+            string rawSelection = (networkComboBox.Text ?? string.Empty).Trim();
+            config.LastNetworkSelection = rawSelection;
+
             ScanRequest request;
 
-            if (string.IsNullOrEmpty(selection) || selection == AutoNetworkLabel)
+            if (string.IsNullOrEmpty(rawSelection) || rawSelection == AutoNetworkLabel)
             {
-                request = new ScanRequest { IsAuto = true };
+                request = new ScanRequest { IsAuto = true, IsRefresh = isRefresh };
             }
             else
             {
+                // Strip adapter annotation suffix " (AdapterName)" — use IndexOf so nested parens in names don't break the range
+                string selection = rawSelection;
+                int parenIdx = selection.IndexOf(" (");
+                if (parenIdx > 0)
+                    selection = selection.Substring(0, parenIdx);
+
                 if (!TryParseRange(selection, out var ips, out var error))
                 {
                     MessageBox.Show(this, error, "Invalid network", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
-                request = new ScanRequest { IsAuto = false, RawInput = selection, Ips = ips };
+                request = new ScanRequest { IsAuto = false, RawInput = selection, Ips = ips, IsRefresh = isRefresh };
             }
 
-            deviceListView.Items.Clear();
+            if (!isRefresh)
+                deviceListView.Items.Clear();
             scanButton.Text = "Cancel Scan";
             statusLabel.Text = request.IsAuto ? "Scanning network..." : $"Scanning {request.Ips!.Count} addresses...";
             progressBar.Visible = true;
@@ -394,7 +502,26 @@ namespace WiFiDeviceScanner
             if (worker!.CancellationPending)
                 e.Cancel = true;
 
-            e.Result = new ScanResult { Devices = devices, NetworkEntry = argument.IsAuto ? null : argument.RawInput };
+            // Resolve MACs with a single arp -a call after all pings complete
+            var arpTable = BuildArpTable();
+            var localIPs = GetLocalIPAddresses();
+            foreach (var device in devices)
+            {
+                if (localIPs.Contains(device.IPAddress))
+                {
+                    device.MACAddress = GetAdapterMacForIP(device.IPAddress) ?? "Unknown";
+                    device.DeviceName = "(This machine)";
+                }
+                else if (device.MACAddress == "Unknown" || string.IsNullOrEmpty(device.MACAddress))
+                {
+                    if (arpTable.TryGetValue(device.IPAddress, out var mac))
+                        device.MACAddress = mac;
+                    else
+                        device.MACAddress = "N/A (routed)";
+                }
+            }
+
+            e.Result = new ScanResult { Devices = devices, NetworkEntry = argument.IsAuto ? null : argument.RawInput, IsRefresh = argument.IsRefresh };
         }
 
         public static bool TryParseRange(string input, out List<string> ips, out string error)
@@ -487,46 +614,217 @@ namespace WiFiDeviceScanner
 
             var result = e.Result as ScanResult;
             var devices = result?.Devices ?? new List<DeviceInfo>();
+            DateTime now = DateTime.Now;
 
-            // Sort devices by IP address numerically
-            var sortedDevices = devices.OrderBy(d => {
-                var parts = d.IPAddress.Split('.');
-                return int.Parse(parts[0]) * 256 * 256 * 256 +
-                       int.Parse(parts[1]) * 256 * 256 +
-                       int.Parse(parts[2]) * 256 +
-                       int.Parse(parts[3]);
-            });
-
-            foreach (var device in sortedDevices)
+            if (result?.IsRefresh == true)
             {
-                string normalizedMac = ConfigStore.NormalizeMac(device.MACAddress);
-                string dnsName = device.DeviceName ?? string.Empty;
-                string displayName = dnsName;
-                if (!string.IsNullOrEmpty(normalizedMac) &&
-                    config.DeviceNames.TryGetValue(normalizedMac, out var customName) &&
-                    !string.IsNullOrEmpty(customName))
+                MergeIntoListView(devices, now);
+            }
+            else
+            {
+                // Full rebuild — list was already cleared in StartScan
+                var sortedDevices = devices.OrderBy(d => {
+                    var parts = d.IPAddress.Split('.');
+                    return int.Parse(parts[0]) * 256 * 256 * 256 +
+                           int.Parse(parts[1]) * 256 * 256 +
+                           int.Parse(parts[2]) * 256 +
+                           int.Parse(parts[3]);
+                });
+
+                var onlineMacs = new HashSet<string>();
+
+                deviceListView.BeginUpdate();
+                foreach (var device in sortedDevices)
                 {
-                    displayName = customName;
+                    string normalizedMac = ConfigStore.NormalizeMac(device.MACAddress);
+                    string dnsName = device.DeviceName ?? string.Empty;
+                    string displayName = dnsName;
+                    if (!string.IsNullOrEmpty(normalizedMac) &&
+                        config.DeviceNames.TryGetValue(normalizedMac, out var customName) &&
+                        !string.IsNullOrEmpty(customName))
+                        displayName = customName;
+
+                    if (IsValidMac(normalizedMac))
+                    {
+                        config.LastSeen[normalizedMac] = now;
+                        config.KnownIPs[normalizedMac] = device.IPAddress;
+                        onlineMacs.Add(normalizedMac);
+                    }
+
+                    var item = new ListViewItem(device.IPAddress);
+                    item.SubItems.Add(device.MACAddress);
+                    item.SubItems.Add(displayName);
+                    item.SubItems.Add(device.Status);
+                    item.SubItems.Add(device.ResponseTime);
+                    item.SubItems.Add(string.Empty); // Not Seen For — empty while online
+                    item.Tag = new RowMeta { Mac = normalizedMac, DnsName = dnsName, IsOnline = true, LastSeenUtc = now };
+                    deviceListView.Items.Add(item);
                 }
 
-                var item = new ListViewItem(device.IPAddress);
-                item.SubItems.Add(device.MACAddress);
-                item.SubItems.Add(displayName);
-                item.SubItems.Add(device.Status);
-                item.SubItems.Add(device.ResponseTime);
-                item.Tag = new RowMeta { Mac = normalizedMac, DnsName = dnsName };
-                deviceListView.Items.Add(item);
+                // Append known devices that didn't respond this scan
+                foreach (var kvp in config.LastSeen.OrderByDescending(k => k.Value))
+                {
+                    string mac = kvp.Key;
+                    if (onlineMacs.Contains(mac)) continue;
+
+                    DateTime lastSeen = kvp.Value;
+                    string knownIp = config.KnownIPs.TryGetValue(mac, out var ip) ? ip : "";
+                    string displayName = config.DeviceNames.TryGetValue(mac, out var cn) ? cn : mac;
+
+                    var offlineItem = new ListViewItem(knownIp);
+                    offlineItem.SubItems.Add(mac);
+                    offlineItem.SubItems.Add(displayName);
+                    offlineItem.SubItems.Add("Offline");
+                    offlineItem.SubItems.Add(string.Empty);
+                    offlineItem.SubItems.Add(FormatTimeSince(lastSeen)); // Not Seen For
+                    offlineItem.ForeColor = SystemColors.GrayText;
+                    offlineItem.Tag = new RowMeta { Mac = mac, DnsName = string.Empty, IsOnline = false, LastSeenUtc = lastSeen };
+                    deviceListView.Items.Add(offlineItem);
+                }
+                deviceListView.EndUpdate();
+
+                if (_sortColumn >= 0)
+                    deviceListView.ListViewItemSorter = new ListViewItemComparer(_sortColumn, _sortAscending);
             }
 
             if (result != null && !string.IsNullOrEmpty(result.NetworkEntry))
             {
                 ConfigStore.AddRecentNetwork(config, result.NetworkEntry);
-                ConfigStore.Save(config);
                 RefreshNetworkComboBox();
                 networkComboBox.SelectedItem = result.NetworkEntry;
             }
 
-            statusLabel.Text = $"Scan complete. Found {devices.Count} devices.";
+            ConfigStore.Save(config);
+            statusLabel.Text = $"Scan complete. Found {devices.Count} device(s) online.";
+        }
+
+        private void MergeIntoListView(List<DeviceInfo> freshDevices, DateTime now)
+        {
+            var byMac = freshDevices
+                .Where(d => IsValidMac(ConfigStore.NormalizeMac(d.MACAddress)))
+                .GroupBy(d => ConfigStore.NormalizeMac(d.MACAddress))
+                .ToDictionary(g => g.Key, g => g.First());
+            var byIp = freshDevices.ToDictionary(d => d.IPAddress, d => d);
+            var mergedMacs = new HashSet<string>();
+            var mergedIps = new HashSet<string>();
+
+            // Collect MACs already shown in the list so we don't duplicate offline rows
+            var existingRowMacs = new HashSet<string>(
+                deviceListView.Items.Cast<ListViewItem>()
+                    .Select(it => (it.Tag as RowMeta)?.Mac ?? string.Empty)
+                    .Where(m => !string.IsNullOrEmpty(m)));
+
+            deviceListView.BeginUpdate();
+
+            for (int i = 0; i < deviceListView.Items.Count; i++)
+            {
+                var item = deviceListView.Items[i];
+                var meta = item.Tag as RowMeta;
+                string mac = meta?.Mac ?? string.Empty;
+
+                DeviceInfo? fresh = null;
+                if (!string.IsNullOrEmpty(mac) && byMac.TryGetValue(mac, out var fd)) fresh = fd;
+                else if (byIp.TryGetValue(item.SubItems[0].Text, out var fd2)) fresh = fd2;
+
+                if (fresh != null)
+                {
+                    string normalizedMac = ConfigStore.NormalizeMac(fresh.MACAddress);
+                    string dnsName = fresh.DeviceName ?? string.Empty;
+                    string displayName = dnsName;
+                    if (!string.IsNullOrEmpty(normalizedMac) &&
+                        config.DeviceNames.TryGetValue(normalizedMac, out var cn) &&
+                        !string.IsNullOrEmpty(cn))
+                        displayName = cn;
+
+                    item.SubItems[0].Text = fresh.IPAddress;
+                    item.SubItems[1].Text = fresh.MACAddress;
+                    item.SubItems[2].Text = displayName;
+                    item.SubItems[3].Text = fresh.Status;
+                    item.SubItems[4].Text = fresh.ResponseTime;
+                    item.SubItems[5].Text = string.Empty; // Not Seen For — empty while online
+                    item.ForeColor = SystemColors.WindowText;
+                    item.Tag = new RowMeta { Mac = normalizedMac, DnsName = dnsName, IsOnline = true, LastSeenUtc = now };
+
+                    if (IsValidMac(normalizedMac))
+                    {
+                        config.LastSeen[normalizedMac] = now;
+                        config.KnownIPs[normalizedMac] = fresh.IPAddress;
+                        mergedMacs.Add(normalizedMac);
+                    }
+                    mergedIps.Add(fresh.IPAddress);
+                }
+                else if (meta?.IsOnline == true)
+                {
+                    // Was online, now gone
+                    DateTime lastSeen = meta.LastSeenUtc ?? now;
+                    item.SubItems[3].Text = "Offline";
+                    item.SubItems[4].Text = string.Empty;
+                    item.SubItems[5].Text = FormatTimeSince(lastSeen); // Not Seen For
+                    item.ForeColor = SystemColors.GrayText;
+                    item.Tag = new RowMeta { Mac = meta.Mac, DnsName = meta.DnsName, IsOnline = false, LastSeenUtc = lastSeen };
+                }
+                else if (meta?.IsOnline == false && meta.LastSeenUtc.HasValue)
+                {
+                    item.SubItems[5].Text = FormatTimeSince(meta.LastSeenUtc.Value);
+                }
+            }
+
+            // Add newly discovered devices
+            foreach (var fresh in freshDevices)
+            {
+                string normalizedMac = ConfigStore.NormalizeMac(fresh.MACAddress);
+                if (IsValidMac(normalizedMac) && mergedMacs.Contains(normalizedMac)) continue;
+                if (mergedIps.Contains(fresh.IPAddress)) continue;
+
+                string dnsName = fresh.DeviceName ?? string.Empty;
+                string displayName = dnsName;
+                if (!string.IsNullOrEmpty(normalizedMac) &&
+                    config.DeviceNames.TryGetValue(normalizedMac, out var cn) &&
+                    !string.IsNullOrEmpty(cn))
+                    displayName = cn;
+
+                if (IsValidMac(normalizedMac))
+                {
+                    config.LastSeen[normalizedMac] = now;
+                    config.KnownIPs[normalizedMac] = fresh.IPAddress;
+                }
+
+                var newItem = new ListViewItem(fresh.IPAddress);
+                newItem.SubItems.Add(fresh.MACAddress);
+                newItem.SubItems.Add(displayName);
+                newItem.SubItems.Add(fresh.Status);
+                newItem.SubItems.Add(fresh.ResponseTime);
+                newItem.SubItems.Add(string.Empty); // Not Seen For — empty while online
+                newItem.Tag = new RowMeta { Mac = normalizedMac, DnsName = dnsName, IsOnline = true, LastSeenUtc = now };
+                deviceListView.Items.Add(newItem);
+            }
+
+            // Inject offline history for MACs not in current scan and not already displayed
+            foreach (var kvp in config.LastSeen.OrderByDescending(k => k.Value))
+            {
+                string mac = kvp.Key;
+                if (byMac.ContainsKey(mac)) continue;
+                if (existingRowMacs.Contains(mac)) continue;
+
+                DateTime lastSeen = kvp.Value;
+                string knownIp = config.KnownIPs.TryGetValue(mac, out var ip) ? ip : "";
+                string displayName = config.DeviceNames.TryGetValue(mac, out var cn) ? cn : mac;
+
+                var offlineItem = new ListViewItem(knownIp);
+                offlineItem.SubItems.Add(mac);
+                offlineItem.SubItems.Add(displayName);
+                offlineItem.SubItems.Add("Offline");
+                offlineItem.SubItems.Add(string.Empty);
+                offlineItem.SubItems.Add(FormatTimeSince(lastSeen)); // Not Seen For
+                offlineItem.ForeColor = SystemColors.GrayText;
+                offlineItem.Tag = new RowMeta { Mac = mac, DnsName = string.Empty, IsOnline = false, LastSeenUtc = lastSeen };
+                deviceListView.Items.Add(offlineItem);
+            }
+
+            if (_sortColumn >= 0)
+                deviceListView.ListViewItemSorter = new ListViewItemComparer(_sortColumn, _sortAscending);
+
+            deviceListView.EndUpdate();
         }
 
         private DeviceInfo PingDevice(string ipAddress)
@@ -554,11 +852,12 @@ namespace WiFiDeviceScanner
                         }
                         catch
                         {
-                            device.DeviceName = "Unknown";
+                            string? nbName = GetNetBiosName(ipAddress);
+                            device.DeviceName = nbName ?? "Unknown";
                         }
 
-                        // Try to get MAC address
-                        device.MACAddress = GetMACAddress(ipAddress);
+                        // MAC address resolved after all pings complete via BuildArpTable
+                        device.MACAddress = "Unknown";
 
                         return device;
                     }
@@ -570,6 +869,103 @@ namespace WiFiDeviceScanner
             }
 
             return null;
+        }
+
+        private static bool IsValidMac(string normalizedMac) =>
+            normalizedMac.Length == 17 && normalizedMac.Count(c => c == ':') == 5;
+
+        private static HashSet<string> GetLocalIPAddresses()
+        {
+            var result = new HashSet<string>();
+            try
+            {
+                foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.OperationalStatus != OperationalStatus.Up) continue;
+                    if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                    foreach (var uni in nic.GetIPProperties().UnicastAddresses)
+                        if (uni.Address.AddressFamily == AddressFamily.InterNetwork)
+                            result.Add(uni.Address.ToString());
+                }
+            }
+            catch { }
+            return result;
+        }
+
+        private static string? GetAdapterMacForIP(string ipAddress)
+        {
+            try
+            {
+                foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.OperationalStatus != OperationalStatus.Up) continue;
+                    foreach (var uni in nic.GetIPProperties().UnicastAddresses)
+                    {
+                        if (uni.Address.AddressFamily == AddressFamily.InterNetwork &&
+                            uni.Address.ToString() == ipAddress)
+                        {
+                            byte[] b = nic.GetPhysicalAddress().GetAddressBytes();
+                            if (b.Length == 6)
+                                return string.Join(":", b.Select(x => x.ToString("X2")));
+                        }
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string FormatTimeSince(DateTime dt)
+        {
+            TimeSpan elapsed = DateTime.Now - dt;
+            if (elapsed.TotalMinutes < 1) return "< 1 min";
+            if (elapsed.TotalHours < 1)   return $"{(int)elapsed.TotalMinutes} min";
+            if (elapsed.TotalDays < 1)    return $"{(int)elapsed.TotalHours}h {elapsed.Minutes}m";
+            return $"{(int)elapsed.TotalDays}d {elapsed.Hours}h";
+        }
+
+        private static List<string> GetActiveAdapterRanges()
+        {
+            var ranges = new List<string>();
+            try
+            {
+                foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.OperationalStatus != OperationalStatus.Up) continue;
+                    if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                    if (nic.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
+
+                    foreach (var uni in nic.GetIPProperties().UnicastAddresses)
+                    {
+                        if (uni.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                        byte[] addrBytes = uni.Address.GetAddressBytes();
+                        byte[] maskBytes = uni.IPv4Mask.GetAddressBytes();
+
+                        // If subnet is larger than /24, clamp to /24 to stay within MaxRangeSize
+                        uint maskUint = ((uint)maskBytes[0] << 24) | ((uint)maskBytes[1] << 16) |
+                                        ((uint)maskBytes[2] << 8) | maskBytes[3];
+                        if (maskUint < 0xFFFFFF00u)
+                            maskBytes = new byte[] { 255, 255, 255, 0 };
+
+                        byte[] netBytes = new byte[4];
+                        byte[] bcastBytes = new byte[4];
+                        for (int i = 0; i < 4; i++)
+                        {
+                            netBytes[i] = (byte)(addrBytes[i] & maskBytes[i]);
+                            bcastBytes[i] = (byte)(netBytes[i] | ~maskBytes[i]);
+                        }
+                        netBytes[3] += 1;
+                        bcastBytes[3] -= 1;
+
+                        string start = string.Join(".", netBytes);
+                        string end = string.Join(".", bcastBytes);
+                        if (start != end)
+                            ranges.Add($"{start}-{end} ({nic.Name})");
+                    }
+                }
+            }
+            catch { }
+            return ranges;
         }
 
         private string GetLocalIPAddress()
@@ -587,6 +983,71 @@ namespace WiFiDeviceScanner
             {
                 return string.Empty;
             }
+        }
+
+        private static string? GetNetBiosName(string ipAddress)
+        {
+            try
+            {
+                var process = new System.Diagnostics.Process();
+                process.StartInfo.FileName = "nbtstat";
+                process.StartInfo.Arguments = "-A " + ipAddress;
+                process.StartInfo.UseShellExecute = false;
+                process.StartInfo.RedirectStandardOutput = true;
+                process.StartInfo.CreateNoWindow = true;
+                process.Start();
+                bool exited = process.WaitForExit(2000);
+                if (!exited)
+                {
+                    try { process.Kill(); } catch { }
+                    return null;
+                }
+                string output = process.StandardOutput.ReadToEnd();
+                foreach (string line in output.Split('\n'))
+                {
+                    string trimmed = line.Trim();
+                    if (trimmed.Contains("<00>") && trimmed.Contains("UNIQUE"))
+                    {
+                        string name = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+                        if (!string.IsNullOrWhiteSpace(name))
+                            return name;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static Dictionary<string, string> BuildArpTable()
+        {
+            var table = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var process = new System.Diagnostics.Process();
+                process.StartInfo.FileName = "arp";
+                process.StartInfo.Arguments = "-a";
+                process.StartInfo.UseShellExecute = false;
+                process.StartInfo.RedirectStandardOutput = true;
+                process.StartInfo.CreateNoWindow = true;
+                process.Start();
+                string output = process.StandardOutput.ReadToEnd();
+                process.WaitForExit(5000);
+
+                foreach (string line in output.Split('\n'))
+                {
+                    var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length < 2) continue;
+                    string ip = parts[0];
+                    string mac = parts[1];
+                    if (!System.Net.IPAddress.TryParse(ip, out _)) continue;
+                    if (ip.StartsWith("224.") || ip.StartsWith("239.") || ip.StartsWith("255.")) continue;
+                    if (mac.Equals("ff-ff-ff-ff-ff-ff", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (mac.Contains('-') || mac.Contains(':'))
+                        table[ip] = mac;
+                }
+            }
+            catch { }
+            return table;
         }
 
         private string GetMACAddress(string ipAddress)
@@ -636,13 +1097,25 @@ namespace WiFiDeviceScanner
 
         public int Compare(object? x, object? y)
         {
-            string valX = ((ListViewItem)x!).SubItems[_column].Text;
-            string valY = ((ListViewItem)y!).SubItems[_column].Text;
+            var itemX = (ListViewItem)x!;
+            var itemY = (ListViewItem)y!;
+            var metaX = itemX.Tag as RowMeta;
+            var metaY = itemY.Tag as RowMeta;
+
+            // Online devices always appear before offline, regardless of sort direction
+            bool onlineX = metaX?.IsOnline ?? true;
+            bool onlineY = metaY?.IsOnline ?? true;
+            if (onlineX != onlineY)
+                return onlineX ? -1 : 1;
+
+            string valX = itemX.SubItems.Count > _column ? itemX.SubItems[_column].Text : string.Empty;
+            string valY = itemY.SubItems.Count > _column ? itemY.SubItems[_column].Text : string.Empty;
 
             int result = _column switch
             {
                 0 => CompareIP(valX, valY),
                 4 => CompareResponseTime(valX, valY),
+                5 => CompareNotSeenFor(metaX, metaY),
                 _ => string.Compare(valX, valY, StringComparison.OrdinalIgnoreCase)
             };
 
@@ -666,6 +1139,15 @@ namespace WiFiDeviceScanner
             int Parse(string s) => int.TryParse(s.Replace(" ms", ""), out int v) ? v : int.MaxValue;
             return Parse(a).CompareTo(Parse(b));
         }
+
+        private static int CompareNotSeenFor(RowMeta? a, RowMeta? b)
+        {
+            TimeSpan elapsedA = (a?.IsOnline ?? true) ? TimeSpan.Zero
+                : (a!.LastSeenUtc.HasValue ? DateTime.Now - a.LastSeenUtc.Value : TimeSpan.MaxValue);
+            TimeSpan elapsedB = (b?.IsOnline ?? true) ? TimeSpan.Zero
+                : (b!.LastSeenUtc.HasValue ? DateTime.Now - b.LastSeenUtc.Value : TimeSpan.MaxValue);
+            return elapsedA.CompareTo(elapsedB);
+        }
     }
 
     public class DeviceInfo
@@ -681,11 +1163,14 @@ namespace WiFiDeviceScanner
     {
         public string Mac { get; set; } = string.Empty;
         public string DnsName { get; set; } = string.Empty;
+        public bool IsOnline { get; set; } = true;
+        public DateTime? LastSeenUtc { get; set; }
     }
 
     internal class ScanRequest
     {
         public bool IsAuto { get; set; }
+        public bool IsRefresh { get; set; }
         public string? RawInput { get; set; }
         public List<string>? Ips { get; set; }
     }
@@ -694,6 +1179,7 @@ namespace WiFiDeviceScanner
     {
         public List<DeviceInfo> Devices { get; set; } = new List<DeviceInfo>();
         public string? NetworkEntry { get; set; }
+        public bool IsRefresh { get; set; }
     }
 
     public partial class DeviceDetailForm : Form
@@ -874,8 +1360,8 @@ namespace WiFiDeviceScanner
             scanProgressBar.Visible = true;
             scanProgressBar.Value = 0;
 
-            infoTextBox.AppendText($"\n\nStarting {scanType} scan...\n");
-            infoTextBox.AppendText($"═══════════════════════════════════════\n");
+            infoTextBox.AppendText($"{Environment.NewLine}{Environment.NewLine}Starting {scanType} scan...{Environment.NewLine}");
+            infoTextBox.AppendText($"═══════════════════════════════════════{Environment.NewLine}");
 
             portScanWorker.RunWorkerAsync(ports);
         }
@@ -921,13 +1407,13 @@ namespace WiFiDeviceScanner
 
             if (e.Cancelled)
             {
-                infoTextBox.AppendText("Port scan cancelled.\n");
+                infoTextBox.AppendText($"Port scan cancelled.{Environment.NewLine}");
                 return;
             }
 
             if (e.Error != null)
             {
-                infoTextBox.AppendText($"Error during port scan: {e.Error.Message}\n");
+                infoTextBox.AppendText($"Error during port scan: {e.Error.Message}{Environment.NewLine}");
                 return;
             }
 
@@ -935,18 +1421,18 @@ namespace WiFiDeviceScanner
             
             if (openPorts.Count == 0)
             {
-                infoTextBox.AppendText("No open ports found.\n");
+                infoTextBox.AppendText($"No open ports found.{Environment.NewLine}");
             }
             else
             {
-                infoTextBox.AppendText($"Found {openPorts.Count} open ports:\n\n");
+                infoTextBox.AppendText($"Found {openPorts.Count} open ports:{Environment.NewLine}{Environment.NewLine}");
                 foreach (var (port, service) in openPorts.OrderBy(p => p.port))
                 {
-                    infoTextBox.AppendText($"Port {port:D5}: {service}\n");
+                    infoTextBox.AppendText($"Port {port:D5}: {service}{Environment.NewLine}");
                 }
             }
 
-            infoTextBox.AppendText("\nScan completed.\n");
+            infoTextBox.AppendText($"{Environment.NewLine}Scan completed.{Environment.NewLine}");
             infoTextBox.SelectionStart = infoTextBox.Text.Length;
             infoTextBox.ScrollToCaret();
         }

@@ -1,223 +1,186 @@
 # WiFi Device Scanner
 
-A powerful Windows application to discover and analyze devices connected to your WiFi network. Built with C# and Windows Forms, this tool provides comprehensive network scanning capabilities with an intuitive graphical interface.
+A Windows application to discover and analyze devices connected to your local network. Built with C# and Windows Forms.
 
-![WiFi Device Scanner](https://img.shields.io/badge/Platform-Windows-blue)
+![Platform](https://img.shields.io/badge/Platform-Windows-blue)
 ![.NET](https://img.shields.io/badge/.NET-8.0-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-## 🌟 Features
+---
+
+## Features
 
 ### Network Discovery
-- **Fast Network Scanning**: Automatically detects your local network range and scans all possible IP addresses
-- **Custom IP Range**: Scan any IPv4 range (e.g. `192.168.1.10-192.168.1.100`) in addition to the auto-detected network. Recently used ranges are remembered.
-- **Device Information**: Shows IP address, MAC address, device name, online status, and response time
-- **Custom Device Names**: Right-click a device to rename it. Names are saved by MAC address and persist across sessions.
-- **Smart Sorting**: Results are automatically sorted by IP address for easy navigation
-- **Real-time Progress**: Visual progress bar shows scanning progress
-- **Parallel Processing**: Uses multi-threading for fast network discovery
+- **Auto-detect network range** — detects your active adapter and scans the /24 subnet automatically
+- **Adapter range selector** — combo box lists all active network adapters with their computed IP ranges; select one to scan that segment directly
+- **Custom IP range** — type any IPv4 range (e.g. `192.168.1.10-192.168.1.100`); recent ranges are remembered across sessions
+- **Last selection remembered** — the network selector restores your last used choice on next launch
+- **Parallel scanning** — 50 concurrent pings for fast discovery (254 IPs in ~3 seconds)
+- **Accurate MAC resolution** — a single `arp -a` pass runs after all pings complete, so the ARP cache is fully populated before MAC lookup
+- **Local machine recognition** — the scanner's own IP is detected and labelled `(This machine)` with the real adapter MAC
+- **Routed device handling** — devices on a different L2 segment (behind a VLAN or router) show `N/A (routed)` instead of the misleading "Unknown"
+- **Device name resolution** — DNS reverse lookup with NetBIOS (`nbtstat`) fallback for hosts that don't respond to DNS
 
-### Device Analysis
-- **Detailed Device Information**: Double-click any device to view comprehensive details
-- **DNS Resolution**: Full hostname resolution with aliases
-- **Ping Statistics**: Multiple ping tests to assess device responsiveness
-- **Port Scanning**: Two scanning modes for security analysis
+### List View
+- **Columns**: IP Address · MAC Address · Device Name · Status · Response Time · Not Seen For
+- **Click any column header to sort** — IP and Response Time sort numerically; Not Seen For sorts by elapsed duration; online devices always appear above offline ones regardless of sort direction
+- **Offline device history** — devices seen in previous scans but not responding now appear in gray at the bottom with a "Not Seen For" duration (e.g. `5 min`, `2h 30m`, `3d 4h`)
 
-### Port Scanning Capabilities
-- **Common Ports Scan**: Quick scan of frequently used ports (HTTP, HTTPS, SSH, FTP, etc.)
-- **Full Port Scan**: Complete scan of all 65,535 ports (1-65535)
-- **Service Detection**: Automatically identifies known services running on open ports
-- **Progress Tracking**: Real-time progress indication during port scanning
+### Scan vs. Refresh
+| Action | Behavior |
+|---|---|
+| **Scan Network** | Clears the list and rebuilds from scratch. Appends offline history rows at the bottom. |
+| **Refresh** | Overlays new results onto the existing list without clearing. Rows that disappear turn gray in-place. Newly found devices are appended. |
 
-## 🚀 Quick Start
+### Device Management
+- **Custom names** — right-click any device → **Rename…** to assign a friendly label (e.g. "Living Room TV"). Names are saved by MAC address and survive IP changes.
+- **Clear name** — right-click → **Clear custom name** reverts to the DNS/NetBIOS hostname.
+- **Double-click** any row to open the Device Details window.
 
-### Prerequisites
-- Windows 10/11
-- .NET 8.0 SDK or later
-
-### Installation Options
-
-#### Option 1: Using Visual Studio
-1. Install [Visual Studio Community 2022](https://visualstudio.microsoft.com/downloads/) (free)
-2. Select ".NET desktop development" workload during installation
-3. Clone or download this repository
-4. Open the solution in Visual Studio
-5. Press F5 to build and run
-
-#### Option 2: Using VS Code or Command Line
-1. Install [.NET 8.0 SDK](https://dotnet.microsoft.com/download)
-2. Clone this repository:
-   ```bash
-   git clone https://github.com/igarreta/WifiDeviceScanner.git
-   cd WifiDeviceScanner
-   ```
-3. Build and run:
-   ```bash
-   dotnet build
-   dotnet run
-   ```
-
-## 📖 How to Use
-
-### Basic Network Scanning
-1. Launch the application
-2. Leave the **Network** selector on "Auto (detect)" or type/select a range like `192.168.1.10-192.168.1.100`
-3. Click **"Scan Network"** to start discovering devices
-4. Wait for the scan to complete (typically 10-30 seconds)
-5. View all discovered devices in the list
-
-### Naming Devices
-1. Right-click any device row
-2. Choose **"Rename..."** and enter a friendly name (e.g. "Living Room TV")
-3. The name is saved by MAC address to `%AppData%/WiFiDeviceScanner/config.json` and reappears in future scans even if the IP changes
-4. Use **"Clear custom name"** to revert to the DNS hostname
-
-### Device Analysis
-1. **Double-click** on any device in the list
-2. A detailed window opens showing:
-   - Complete device information
-   - DNS resolution details
-   - Ping statistics (4 test pings)
-   - Port scanning options
-
-### Port Scanning
-- **Common Ports**: Click "Scan Common Ports" for a quick security check
-- **Full Scan**: Click "Scan All Ports" for comprehensive analysis (takes several minutes)
-
-## 🖥️ Screenshots
-
-### Main Interface
-```
-┌─────────────────────────────────────────────────────────┐
-│ WiFi Device Scanner                                  [X]│
-├─────────────────────────────────────────────────────────┤
-│ [Scan Network] [Refresh]  Status: Ready to scan        │
-│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 100%             │
-│                                                         │
-│ IP Address  │MAC Address    │Device Name        │Status │
-│ 192.168.1.1 │a1:b2:c3:d4:e5 │Router            │Online │
-│ 192.168.1.10│f6:g7:h8:i9:j0 │Desktop-PC        │Online │
-│ 192.168.1.15│k1:l2:m3:n4:o5 │iPhone-12         │Online │
-│             │               │                   │       │
-└─────────────────────────────────────────────────────────┘
-```
+### Export
+- Click **Export…** to save the current list as a CSV file.
+- Choose **All devices** (includes offline history rows) or **Connected only**.
+- CSV columns: `IP Address, MAC Address, Device Name, Status, Response Time, Not Seen For`
 
 ### Device Details Window
-```
-┌─────────────────────────────────────────────────────────┐
-│ Device Details - 192.168.1.10                      [X]│
-├─────────────────────────────────────────────────────────┤
-│ ═══════════════════════════════════════               │
-│       DEVICE INFORMATION                               │
-│ ═══════════════════════════════════════               │
-│ IP Address: 192.168.1.10                              │
-│ Device Name: Desktop-PC                                │
-│ Full Hostname: desktop-pc.local                        │
-│                                                         │
-│ PING STATISTICS:                                        │
-│ Ping 1: 2ms                                           │
-│ Ping 2: 1ms                                           │
-│ Ping 3: 3ms                                           │
-│ Ping 4: 2ms                                           │
-│                                                         │
-│ [Scan Common Ports] [Scan All Ports] [Close]          │
-│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 65%                   │
-└─────────────────────────────────────────────────────────┘
-```
-
-## 🔧 Technical Details
-
-### Architecture
-- **Framework**: .NET 8.0 with Windows Forms
-- **Language**: C# 12
-- **Threading**: BackgroundWorker for non-blocking operations
-- **Network**: System.Net.NetworkInformation for ping operations
-- **Sockets**: TcpClient for port scanning
-
-### Key Components
-- `MainForm.cs`: Main application window and network scanning logic
-- `DeviceDetailForm.cs`: Device analysis and port scanning interface
-- `DeviceInfo.cs`: Data model for network device information
-
-### Network Scanning Algorithm
-1. Detects local IP address and network range
-2. Performs parallel ping operations on IP range (typically 192.168.1.1-254)
-3. Resolves hostnames using DNS lookup
-4. Retrieves MAC addresses using ARP table
-5. Sorts results by IP address numerically
-
-### Port Scanning
-- **Timeout**: 100ms per port for responsive scanning
-- **Common Ports**: Pre-defined list of 16 most common services
-- **Service Detection**: Built-in database of port-to-service mappings
-- **Parallel Processing**: Optimized for speed while maintaining accuracy
-
-## 🛡️ Security & Privacy
-
-- **Local Network Only**: Scans only your local network segment
-- **No Data Collection**: No information is sent outside your network
-- **Read-Only Operations**: Only performs network discovery, no modifications
-- **Firewall Friendly**: Uses standard ICMP ping and TCP connect operations
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**"No devices found"**
-- Ensure you're connected to WiFi
-- Check if your firewall is blocking the application
-- Some devices may not respond to ping requests
-
-**"Permission denied errors"**
-- Run as Administrator for full functionality
-- Some antivirus software may block network scanning
-
-**"Slow scanning"**
-- Large networks (with many devices) take longer to scan
-- Cancel and restart if scanning appears stuck
-
-### Performance Tips
-- Use "Common Ports" scan for quick analysis
-- Close other network-intensive applications during full port scans
-- Consider excluding inactive IP ranges for faster scanning
-
-## 📝 Changelog
-
-### Version 1.0
-- Initial release with basic network scanning
-- Device discovery with IP, MAC, and hostname resolution
-- Real-time progress indication
-
-### Version 1.2
-- Custom IP range scanning (e.g. `192.168.1.10-192.168.1.100`) with recent ranges remembered across sessions
-- Persistent device names: right-click to rename any device by MAC address, saved to `%AppData%/WiFiDeviceScanner/config.json`
-
-### Version 1.1
-- Added device detail analysis window
-- Implemented port scanning capabilities
-- Enhanced DNS resolution with ping statistics
-- Improved IP address sorting algorithm
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
-
-### Development Setup
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make your changes and test thoroughly
-4. Submit a pull request with a clear description
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with love using C# and Windows Forms
-- Inspired by network administration tools like Nmap and Advanced IP Scanner
-- Thanks to the .NET community for excellent documentation and examples
+- Full hostname and DNS aliases
+- 4-ping statistics
+- Port scanner: **Common Ports** (quick, ~16 well-known ports) or **All Ports 1–65535** (thorough, takes several minutes)
+- Open ports listed with service names (HTTP, SSH, RDP, etc.)
 
 ---
 
-**⚠️ Disclaimer**: This tool is intended for network administration and security analysis of networks you own or have permission to scan. Always ensure you have proper authorization before scanning networks.
+## Quick Start
+
+### Prerequisites
+- Windows 10 / 11
+- .NET 8.0 SDK or Runtime
+
+### Build and run
+```bash
+git clone https://github.com/igarreta/WifiDeviceScanner.git
+cd WifiDeviceScanner
+dotnet run
+```
+
+Or open in Visual Studio 2022 and press F5.
+
+---
+
+## How to Use
+
+### Scanning
+1. Launch the application.
+2. The **Network** combo box defaults to `Auto (detect)`. You can also select an adapter range (e.g. `192.168.1.1-192.168.1.254 (Wi-Fi)`) or type a custom range.
+3. Click **Scan Network** for a full fresh scan, or **Refresh** to update the existing list in-place.
+4. The progress bar fills as each IP is probed. Results appear after the scan completes.
+
+### Understanding MAC values
+| MAC column value | Meaning |
+|---|---|
+| `AA:BB:CC:DD:EE:FF` | Normal — device is on the local L2 segment |
+| `(This machine)` in Name, real MAC shown | The scanner's own IP |
+| `N/A (routed)` | Device routes through the gateway; its MAC is not visible on this segment |
+
+### Offline devices
+Devices that appeared in a previous scan but are not responding now are shown in gray at the bottom of the list. The **Not Seen For** column shows how long ago they were last seen. These rows are removed from the list only when you do a fresh **Scan Network** and the device has never been seen before.
+
+### Naming devices
+1. Right-click any row → **Rename…**
+2. Enter a friendly name and click OK.
+3. The name is saved to `%AppData%\WiFiDeviceScanner\config.json` keyed by MAC address, so it persists across sessions even if the device's IP changes.
+
+### Exporting
+1. Click **Export…**
+2. Choose **All devices** or **Connected only**.
+3. Click **Save** and pick a file location. The CSV includes all visible columns.
+
+---
+
+## Technical Details
+
+### Architecture
+- **Framework**: .NET 8.0 · Windows Forms
+- **Language**: C# 12
+- **Threading**: `BackgroundWorker` keeps the UI responsive during scans
+- **MAC resolution**: Single `arp -a` call after all parallel pings complete; no per-IP ARP races
+- **Local machine MAC**: Read directly from `NetworkInterface.GetPhysicalAddress()` — not from ARP
+- **Persistence**: `System.Text.Json` → `%AppData%\WiFiDeviceScanner\config.json`
+
+### Scan algorithm
+1. Enumerate local adapters to find the network range (or use user-supplied range).
+2. `Parallel.ForEach` with 50 concurrent pings across all IPs.
+3. After all pings: one `arp -a` call parses the full ARP table.
+4. For each responding IP: match to ARP table → assign MAC. If the IP is the local machine's own address → read MAC from adapter. If no ARP entry → mark `N/A (routed)`.
+5. DNS reverse lookup (+ NetBIOS fallback) for device names.
+6. Merge results into the list view; persist `LastSeen` / `KnownIPs` to config.
+
+### Persistence (`config.json`)
+| Key | Contents |
+|---|---|
+| `DeviceNames` | `{ "MAC": "Custom name" }` |
+| `RecentNetworks` | Last 10 manually entered IP ranges |
+| `LastNetworkSelection` | Restores combo box on next launch |
+| `LastSeen` | `{ "MAC": ISO-8601 timestamp }` for offline history |
+| `KnownIPs` | `{ "MAC": "last known IP" }` for offline rows |
+
+---
+
+## Troubleshooting
+
+**No devices found**
+- Ensure the machine is connected to the network.
+- Check that Windows Firewall allows the app to make outbound ICMP requests.
+- Some devices block ping (IoT devices, hardened servers).
+
+**MAC shows `N/A (routed)`**
+- The device is on a different network segment (separate VLAN, guest network, or different radio band on the router). Its MAC is not visible from this machine — this is a network topology limitation, not a bug.
+
+**Device name shows "Unknown"**
+- DNS reverse lookup failed and NetBIOS did not respond. Assign a custom name via right-click → **Rename…**
+
+**Slow scan**
+- Reduce the range to only the IPs you care about (e.g. `192.168.1.1-192.168.1.50`).
+- Full port scans (1–65535) on the Device Details window take several minutes by design.
+
+---
+
+## Changelog
+
+### Version 1.4
+- Local machine detection: shows real adapter MAC and `(This machine)` label
+- Routed device detection: shows `N/A (routed)` for cross-segment devices instead of "Unknown"
+- Fixed duplicate rows on Refresh for devices with invalid MACs
+- Fixed network selector crash when "Auto (detect)" was selected (annotation stripping now occurs after the auto-detect check)
+- Network selection remembered across sessions
+
+### Version 1.3
+- Single ARP pass for accurate MAC resolution (eliminated 50-parallel-ARP race condition)
+- NetBIOS name fallback (`nbtstat`) when DNS fails
+- Network adapter ranges shown in the network selector combo box
+- Scan vs. Refresh distinction (Scan rebuilds; Refresh merges in-place)
+- Offline device history with "Not Seen For" column
+- Export to CSV (all devices or connected only)
+- Port scan output one line per port (fixed `\r\n` rendering in WinForms TextBox)
+- Column sorting with online devices always grouped above offline
+
+### Version 1.2
+- Custom IP range scanning with recent ranges remembered
+- Persistent device names saved by MAC address
+
+### Version 1.1
+- Device detail window with DNS, ping statistics, and port scanning
+- Improved IP address sorting
+
+### Version 1.0
+- Initial release: network scan, IP/MAC/hostname display, progress bar
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+> **Disclaimer**: Use this tool only on networks you own or have explicit permission to scan.
